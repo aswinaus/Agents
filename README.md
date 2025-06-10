@@ -10,3 +10,5 @@ This is the most simplest form of agentic reasoning.
 
 # [Routing Agent with Observability](https://github.com/aswinaus/Agents/blob/main/Routing_Agent_Observability.ipynb)
 
+# [Routing Agent with Observability at tools](https://github.com/aswinaus/Agents/blob/main/Routing_Agent_Observability_at_tools.ipynb)
+
