@@ -8,5 +8,5 @@ Agentic reasoning implementation uses an LLM to reason about the appropriate RAG
 
 This is the most simplest form of agentic reasoning.
 
-Routing Agent with Observability https://github.com/aswinaus/Agents/blob/main/Routing_Agent_Observability.ipynb
+# [Routing Agent with Observability[(https://github.com/aswinaus/Agents/blob/main/Routing_Agent_Observability.ipynb)
 
