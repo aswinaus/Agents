@@ -32,7 +32,19 @@ public sealed class Level3WorkflowRunner(
             .CorrelationId(input.CorrelationId)
             .Build();
 
+        using var rootScope = InvokeAgentScope.Start(new InvokeAgentOptions
+        {
+            AgentId = "tax-level3-agent",
+            AgentName = "Tax Level 3 Agent",
+            TenantId = input.TenantId,
+            ConversationId = input.ConversationId,
+            RequestContent = input.Title,
+            Endpoint = "/api/level3/run",
+            SourceName = "CopilotStudio"
+        });
+
         var runId = Guid.NewGuid().ToString("N");
+
         var state = new CaseState
         {
             CaseId = input.CaseId,
@@ -55,10 +67,34 @@ public sealed class Level3WorkflowRunner(
             Memory = recalledMemory
         };
 
-        var inputArtifactPath = await artifactStore.SaveJsonAsync($"runs/{runId}/input.json", inputEnvelope, cancellationToken);
+        var inputArtifactPath = await artifactStore.SaveJsonAsync(
+            $"runs/{runId}/input.json",
+            inputEnvelope,
+            cancellationToken);
 
-        var advisorText = await stepRunner.RunAgentAsync("tax_advisor", JsonSerializer.Serialize(inputEnvelope, JsonOptions), cancellationToken);
-        var advisorArtifactPath = await artifactStore.SaveTextAsync($"runs/{runId}/advisor-output.json", advisorText, cancellationToken);
+        var advisorInputJson = JsonSerializer.Serialize(inputEnvelope, JsonOptions);
+
+        using var advisorScope = InvokeAgentScope.Start(new InvokeAgentOptions
+        {
+            AgentId = "tax_advisor",
+            AgentName = "Tax Advisor",
+            TenantId = input.TenantId,
+            ConversationId = input.ConversationId,
+            RequestContent = advisorInputJson,
+            Endpoint = "internal://tax_advisor",
+            SourceName = "TaxLevel3Workflow"
+        });
+
+        var advisorText = await stepRunner.RunAgentAsync(
+            "tax_advisor",
+            advisorInputJson,
+            cancellationToken);
+
+        var advisorArtifactPath = await artifactStore.SaveTextAsync(
+            $"runs/{runId}/advisor-output.json",
+            advisorText,
+            cancellationToken);
+
         var advisorDecision = ParseJson<AdvisorDecision>(advisorText, "tax_advisor");
 
         if (advisorDecision.Action.Equals("NeedMoreInfo", StringComparison.OrdinalIgnoreCase))
@@ -68,8 +104,21 @@ public sealed class Level3WorkflowRunner(
             state.UpdatedUtc = DateTimeOffset.UtcNow;
             await stateStore.SaveAsync(state, cancellationToken);
 
-            var reviewTaskId = await humanReviewStore.CreateNeedMoreInfoTaskAsync(input, advisorDecision, cancellationToken);
-            await SaveEvaluationStubAsync(input, runId, inputArtifactPath, advisorArtifactPath, null, null, null, state, cancellationToken);
+            var reviewTaskId = await humanReviewStore.CreateNeedMoreInfoTaskAsync(
+                input,
+                advisorDecision,
+                cancellationToken);
+
+            await SaveEvaluationStubAsync(
+                input,
+                runId,
+                inputArtifactPath,
+                advisorArtifactPath,
+                null,
+                null,
+                null,
+                state,
+                cancellationToken);
 
             return new WorkflowRunResult
             {
@@ -88,8 +137,29 @@ public sealed class Level3WorkflowRunner(
             Memory = recalledMemory
         };
 
-        var deliverableText = await stepRunner.RunAgentAsync("tax_deliverable", JsonSerializer.Serialize(deliverableInput, JsonOptions), cancellationToken);
-        var deliverableArtifactPath = await artifactStore.SaveTextAsync($"runs/{runId}/deliverable-output.json", deliverableText, cancellationToken);
+        var deliverableInputJson = JsonSerializer.Serialize(deliverableInput, JsonOptions);
+
+        using var deliverableScope = InvokeAgentScope.Start(new InvokeAgentOptions
+        {
+            AgentId = "tax_deliverable",
+            AgentName = "Tax Deliverable",
+            TenantId = input.TenantId,
+            ConversationId = input.ConversationId,
+            RequestContent = deliverableInputJson,
+            Endpoint = "internal://tax_deliverable",
+            SourceName = "TaxLevel3Workflow"
+        });
+
+        var deliverableText = await stepRunner.RunAgentAsync(
+            "tax_deliverable",
+            deliverableInputJson,
+            cancellationToken);
+
+        var deliverableArtifactPath = await artifactStore.SaveTextAsync(
+            $"runs/{runId}/deliverable-output.json",
+            deliverableText,
+            cancellationToken);
+
         var deliverableMemo = ParseJson<DeliverableMemo>(deliverableText, "tax_deliverable");
 
         var reviewInput = new
@@ -100,8 +170,29 @@ public sealed class Level3WorkflowRunner(
             Memory = recalledMemory
         };
 
-        var reviewText = await stepRunner.RunAgentAsync("tax_reviewer", JsonSerializer.Serialize(reviewInput, JsonOptions), cancellationToken);
-        var reviewArtifactPath = await artifactStore.SaveTextAsync($"runs/{runId}/review-output.json", reviewText, cancellationToken);
+        var reviewInputJson = JsonSerializer.Serialize(reviewInput, JsonOptions);
+
+        using var reviewerScope = InvokeAgentScope.Start(new InvokeAgentOptions
+        {
+            AgentId = "tax_reviewer",
+            AgentName = "Tax Reviewer",
+            TenantId = input.TenantId,
+            ConversationId = input.ConversationId,
+            RequestContent = reviewInputJson,
+            Endpoint = "internal://tax_reviewer",
+            SourceName = "TaxLevel3Workflow"
+        });
+
+        var reviewText = await stepRunner.RunAgentAsync(
+            "tax_reviewer",
+            reviewInputJson,
+            cancellationToken);
+
+        var reviewArtifactPath = await artifactStore.SaveTextAsync(
+            $"runs/{runId}/review-output.json",
+            reviewText,
+            cancellationToken);
+
         var reviewDecision = ParseJson<ReviewDecision>(reviewText, "tax_reviewer");
 
         string? docxPath = null;
@@ -109,35 +200,62 @@ public sealed class Level3WorkflowRunner(
 
         if (reviewDecision.Decision.Equals("Approved", StringComparison.OrdinalIgnoreCase))
         {
-            docxPath = await docxMemoBuilder.BuildAsync(input.CaseId, deliverableMemo, cancellationToken);
+            using (var docxScope = ExecuteToolScope.Start(new ExecuteToolOptions
+            {
+                ToolName = "OpenXmlDocxMemoBuilder",
+                ToolType = "document-generation"
+            }))
+            {
+                docxPath = await docxMemoBuilder.BuildAsync(
+                    input.CaseId,
+                    deliverableMemo,
+                    cancellationToken);
+            }
+
             state.Status = "Approved";
             state.FinalDocxPath = docxPath;
-            await memoryService.WriteApprovedLearningAsync(new MemoryWriteRequest
+
+            using (var memoryWriteScope = ExecuteToolScope.Start(new ExecuteToolOptions
             {
-                TenantId = input.TenantId,
-                ClientId = input.ClientId,
-                CaseId = input.CaseId,
-                Category = "ApprovedMemoPattern",
-                Title = input.Title,
-                Content = deliverableMemo.ExecutiveSummary,
-                Source = "Level3Workflow",
-                Metadata = new Dictionary<string, string>
+                ToolName = "FoundryMemoryWrite",
+                ToolType = "memory-write"
+            }))
+            {
+                await memoryService.WriteApprovedLearningAsync(new MemoryWriteRequest
                 {
-                    ["runId"] = runId
-                }
-            }, cancellationToken);
+                    TenantId = input.TenantId,
+                    ClientId = input.ClientId,
+                    CaseId = input.CaseId,
+                    Category = "ApprovedMemoPattern",
+                    Title = input.Title,
+                    Content = deliverableMemo.ExecutiveSummary,
+                    Source = "Level3Workflow",
+                    Metadata = new Dictionary<string, string>
+                    {
+                        ["runId"] = runId
+                    }
+                }, cancellationToken);
+            }
         }
         else if (reviewDecision.Decision.Equals("NeedMoreInfo", StringComparison.OrdinalIgnoreCase))
         {
             state.Status = "NeedMoreInfo";
             state.NeedMoreInfoCount++;
-            reviewTaskPath = await humanReviewStore.CreateReviewTaskAsync(input, deliverableMemo, reviewDecision, cancellationToken);
+            reviewTaskPath = await humanReviewStore.CreateReviewTaskAsync(
+                input,
+                deliverableMemo,
+                reviewDecision,
+                cancellationToken);
         }
         else
         {
             state.Status = "Rejected";
             state.RevisionCount++;
-            reviewTaskPath = await humanReviewStore.CreateEscalationTaskAsync(input, deliverableMemo, reviewDecision, cancellationToken);
+            reviewTaskPath = await humanReviewStore.CreateEscalationTaskAsync(
+                input,
+                deliverableMemo,
+                reviewDecision,
+                cancellationToken);
         }
 
         state.CurrentMemoJsonPath = deliverableArtifactPath;
@@ -145,7 +263,16 @@ public sealed class Level3WorkflowRunner(
         state.UpdatedUtc = DateTimeOffset.UtcNow;
         await stateStore.SaveAsync(state, cancellationToken);
 
-        await SaveEvaluationStubAsync(input, runId, inputArtifactPath, advisorArtifactPath, deliverableArtifactPath, reviewArtifactPath, docxPath, state, cancellationToken);
+        await SaveEvaluationStubAsync(
+            input,
+            runId,
+            inputArtifactPath,
+            advisorArtifactPath,
+            deliverableArtifactPath,
+            reviewArtifactPath,
+            docxPath,
+            state,
+            cancellationToken);
 
         return new WorkflowRunResult
         {
