@@ -1,5 +1,7 @@
 using System.Text.Json;
 using Microsoft.Agents.A365.Observability.Runtime.Common;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Contracts;
+using Microsoft.Agents.A365.Observability.Runtime.Tracing.Scopes;
 using TaxAgent.Level3.Api.Contracts;
 using TaxAgent.Level3.Api.Prompts;
 using TaxAgent.Level4.Evaluation.Dtos;
@@ -15,7 +17,8 @@ public sealed class Level3WorkflowRunner(
     IHumanReviewStore humanReviewStore,
     IMemoryService memoryService,
     IDocxMemoBuilder docxMemoBuilder,
-    IEvaluationStore evaluationStore) : ILevel3WorkflowRunner
+    IEvaluationStore evaluationStore)
+    : ILevel3WorkflowRunner
 {
     private const string Level3AgentId = "tax-level3-agent";
     private const string Level3AgentName = "Tax Level 3 Agent";
@@ -48,14 +51,16 @@ public sealed class Level3WorkflowRunner(
             .CorrelationId(input.CorrelationId)
             .Build();
 
-        using var rootScope = StartAgentScope(
-            agentId: Level3AgentId,
-            agentName: Level3AgentName,
+        using var rootScope = StartInvokeScope(
+            invokedAgentId: Level3AgentId,
+            invokedAgentName: Level3AgentName,
             tenantId: input.TenantId,
             conversationId: input.ConversationId,
             requestContent: input.Title,
             endpoint: "/api/level3/run",
-            sourceName: CopilotSourceName);
+            sourceName: CopilotSourceName,
+            callerAgentId: null,
+            callerAgentName: null);
 
         var state = new CaseState
         {
@@ -67,7 +72,15 @@ public sealed class Level3WorkflowRunner(
 
         await stateStore.SaveAsync(state, cancellationToken);
 
-        var recalledMemory = await RecallMemoryAsync(input, cancellationToken);
+        var recalledMemory = await memoryService.RecallAsync(
+            new MemoryQuery
+            {
+                TenantId = input.TenantId,
+                ClientId = input.ClientId,
+                CaseId = input.CaseId,
+                Topic = input.Title
+            },
+            cancellationToken);
 
         var inputEnvelope = new
         {
@@ -80,135 +93,18 @@ public sealed class Level3WorkflowRunner(
             inputEnvelope,
             cancellationToken);
 
-        var advisorDecision = await RunAdvisorAsync(
-            input,
-            runId,
-            inputEnvelope,
-            cancellationToken);
-
-        if (advisorDecision.Decision.Action.Equals("NeedMoreInfo", StringComparison.OrdinalIgnoreCase))
-        {
-            return await HandleAdvisorNeedMoreInfoAsync(
-                input,
-                runId,
-                state,
-                inputArtifactPath,
-                advisorDecision.ArtifactPath,
-                advisorDecision.Decision,
-                cancellationToken);
-        }
-
-        var deliverableResult = await RunDeliverableAsync(
-            input,
-            runId,
-            advisorDecision.Decision,
-            recalledMemory,
-            cancellationToken);
-
-        var reviewResult = await RunReviewerAsync(
-            input,
-            runId,
-            advisorDecision.Decision,
-            deliverableResult.Memo,
-            recalledMemory,
-            cancellationToken);
-
-        string? docxPath = null;
-        string? reviewTaskPath = null;
-
-        switch (reviewResult.Decision.Decision)
-        {
-            case var decision when decision.Equals("Approved", StringComparison.OrdinalIgnoreCase):
-                docxPath = await BuildDocxAsync(input.CaseId, deliverableResult.Memo, cancellationToken);
-
-                state.Status = "Approved";
-                state.FinalDocxPath = docxPath;
-                state.UpdatedUtc = DateTimeOffset.UtcNow;
-
-                await WriteApprovedLearningAsync(input, runId, deliverableResult.Memo, cancellationToken);
-                break;
-
-            case var decision when decision.Equals("NeedMoreInfo", StringComparison.OrdinalIgnoreCase):
-                state.Status = "NeedMoreInfo";
-                state.NeedMoreInfoCount++;
-                state.UpdatedUtc = DateTimeOffset.UtcNow;
-
-                reviewTaskPath = await humanReviewStore.CreateReviewTaskAsync(
-                    input,
-                    deliverableResult.Memo,
-                    reviewResult.Decision,
-                    cancellationToken);
-                break;
-
-            default:
-                state.Status = "Rejected";
-                state.RevisionCount++;
-                state.UpdatedUtc = DateTimeOffset.UtcNow;
-
-                reviewTaskPath = await humanReviewStore.CreateEscalationTaskAsync(
-                    input,
-                    deliverableResult.Memo,
-                    reviewResult.Decision,
-                    cancellationToken);
-                break;
-        }
-
-        state.CurrentMemoJsonPath = deliverableResult.ArtifactPath;
-        state.CurrentReviewJsonPath = reviewResult.ArtifactPath;
-
-        await stateStore.SaveAsync(state, cancellationToken);
-
-        await SaveEvaluationStubAsync(
-            input,
-            runId,
-            inputArtifactPath,
-            advisorDecision.ArtifactPath,
-            deliverableResult.ArtifactPath,
-            reviewResult.ArtifactPath,
-            docxPath,
-            state,
-            cancellationToken);
-
-        return new WorkflowRunResult
-        {
-            CaseId = input.CaseId,
-            RunId = runId,
-            Status = state.Status,
-            AdvisorArtifactPath = advisorDecision.ArtifactPath,
-            DeliverableArtifactPath = deliverableResult.ArtifactPath,
-            ReviewArtifactPath = reviewResult.ArtifactPath,
-            MemoDocxPath = docxPath,
-            ReviewTaskId = reviewTaskPath
-        };
-    }
-
-    private async Task<object?> RecallMemoryAsync(KnowledgeInput input, CancellationToken cancellationToken)
-    {
-        return await memoryService.RecallAsync(new MemoryQuery
-        {
-            TenantId = input.TenantId,
-            ClientId = input.ClientId,
-            CaseId = input.CaseId,
-            Topic = input.Title
-        }, cancellationToken);
-    }
-
-    private async Task<(AdvisorDecision Decision, string ArtifactPath)> RunAdvisorAsync(
-        KnowledgeInput input,
-        string runId,
-        object inputEnvelope,
-        CancellationToken cancellationToken)
-    {
         var advisorInputJson = JsonSerializer.Serialize(inputEnvelope, JsonOptions);
 
-        using var advisorScope = StartAgentScope(
-            agentId: TaxAdvisorAgentId,
-            agentName: TaxAdvisorAgentName,
+        using var advisorScope = StartInvokeScope(
+            invokedAgentId: TaxAdvisorAgentId,
+            invokedAgentName: TaxAdvisorAgentName,
             tenantId: input.TenantId,
             conversationId: input.ConversationId,
             requestContent: advisorInputJson,
             endpoint: $"internal://{TaxAdvisorAgentId}",
-            sourceName: WorkflowSourceName);
+            sourceName: WorkflowSourceName,
+            callerAgentId: Level3AgentId,
+            callerAgentName: Level3AgentName);
 
         var advisorText = await stepRunner.RunAgentAsync(
             TaxAdvisorAgentId,
@@ -222,16 +118,40 @@ public sealed class Level3WorkflowRunner(
 
         var advisorDecision = ParseJson<AdvisorDecision>(advisorText, TaxAdvisorAgentId);
 
-        return (advisorDecision, advisorArtifactPath);
-    }
+        if (advisorDecision.Action.Equals("NeedMoreInfo", StringComparison.OrdinalIgnoreCase))
+        {
+            state.Status = "NeedMoreInfo";
+            state.NeedMoreInfoCount++;
+            state.UpdatedUtc = DateTimeOffset.UtcNow;
 
-    private async Task<(DeliverableMemo Memo, string ArtifactPath)> RunDeliverableAsync(
-        KnowledgeInput input,
-        string runId,
-        AdvisorDecision advisorDecision,
-        object? recalledMemory,
-        CancellationToken cancellationToken)
-    {
+            await stateStore.SaveAsync(state, cancellationToken);
+
+            var reviewTaskId = await humanReviewStore.CreateNeedMoreInfoTaskAsync(
+                input,
+                advisorDecision,
+                cancellationToken);
+
+            await SaveEvaluationStubAsync(
+                input,
+                runId,
+                inputArtifactPath,
+                advisorArtifactPath,
+                null,
+                null,
+                null,
+                state,
+                cancellationToken);
+
+            return new WorkflowRunResult
+            {
+                CaseId = input.CaseId,
+                RunId = runId,
+                Status = "NeedMoreInfo",
+                AdvisorArtifactPath = advisorArtifactPath,
+                ReviewTaskId = reviewTaskId
+            };
+        }
+
         var deliverableInput = new
         {
             Source = input,
@@ -241,14 +161,16 @@ public sealed class Level3WorkflowRunner(
 
         var deliverableInputJson = JsonSerializer.Serialize(deliverableInput, JsonOptions);
 
-        using var deliverableScope = StartAgentScope(
-            agentId: TaxDeliverableAgentId,
-            agentName: TaxDeliverableAgentName,
+        using var deliverableScope = StartInvokeScope(
+            invokedAgentId: TaxDeliverableAgentId,
+            invokedAgentName: TaxDeliverableAgentName,
             tenantId: input.TenantId,
             conversationId: input.ConversationId,
             requestContent: deliverableInputJson,
             endpoint: $"internal://{TaxDeliverableAgentId}",
-            sourceName: WorkflowSourceName);
+            sourceName: WorkflowSourceName,
+            callerAgentId: Level3AgentId,
+            callerAgentName: Level3AgentName);
 
         var deliverableText = await stepRunner.RunAgentAsync(
             TaxDeliverableAgentId,
@@ -262,17 +184,6 @@ public sealed class Level3WorkflowRunner(
 
         var deliverableMemo = ParseJson<DeliverableMemo>(deliverableText, TaxDeliverableAgentId);
 
-        return (deliverableMemo, deliverableArtifactPath);
-    }
-
-    private async Task<(ReviewDecision Decision, string ArtifactPath)> RunReviewerAsync(
-        KnowledgeInput input,
-        string runId,
-        AdvisorDecision advisorDecision,
-        DeliverableMemo deliverableMemo,
-        object? recalledMemory,
-        CancellationToken cancellationToken)
-    {
         var reviewInput = new
         {
             Source = input,
@@ -283,14 +194,16 @@ public sealed class Level3WorkflowRunner(
 
         var reviewInputJson = JsonSerializer.Serialize(reviewInput, JsonOptions);
 
-        using var reviewerScope = StartAgentScope(
-            agentId: TaxReviewerAgentId,
-            agentName: TaxReviewerAgentName,
+        using var reviewerScope = StartInvokeScope(
+            invokedAgentId: TaxReviewerAgentId,
+            invokedAgentName: TaxReviewerAgentName,
             tenantId: input.TenantId,
             conversationId: input.ConversationId,
             requestContent: reviewInputJson,
             endpoint: $"internal://{TaxReviewerAgentId}",
-            sourceName: WorkflowSourceName);
+            sourceName: WorkflowSourceName,
+            callerAgentId: Level3AgentId,
+            callerAgentName: Level3AgentName);
 
         var reviewText = await stepRunner.RunAgentAsync(
             TaxReviewerAgentId,
@@ -304,37 +217,110 @@ public sealed class Level3WorkflowRunner(
 
         var reviewDecision = ParseJson<ReviewDecision>(reviewText, TaxReviewerAgentId);
 
-        return (reviewDecision, reviewArtifactPath);
-    }
+        string? docxPath = null;
+        string? reviewTaskPath = null;
 
-    private async Task<WorkflowRunResult> HandleAdvisorNeedMoreInfoAsync(
-        KnowledgeInput input,
-        string runId,
-        CaseState state,
-        string inputArtifactPath,
-        string advisorArtifactPath,
-        AdvisorDecision advisorDecision,
-        CancellationToken cancellationToken)
-    {
-        state.Status = "NeedMoreInfo";
-        state.NeedMoreInfoCount++;
+        if (reviewDecision.Decision.Equals("Approved", StringComparison.OrdinalIgnoreCase))
+        {
+            using (var docxScope = StartToolScope(
+                       toolName: "OpenXmlDocxMemoBuilder",
+                       toolType: "document-generation",
+                       tenantId: input.TenantId,
+                       conversationId: input.ConversationId,
+                       agentId: Level3AgentId,
+                       agentName: Level3AgentName,
+                       arguments: JsonSerializer.Serialize(
+                           new
+                           {
+                               input.CaseId,
+                               MemoTitle = input.Title
+                           },
+                           JsonOptions)))
+            {
+                docxPath = await docxMemoBuilder.BuildAsync(
+                    input.CaseId,
+                    deliverableMemo,
+                    cancellationToken);
+            }
+
+            state.Status = "Approved";
+            state.FinalDocxPath = docxPath;
+
+            using (var memoryWriteScope = StartToolScope(
+                       toolName: "FoundryMemoryWrite",
+                       toolType: "memory-write",
+                       tenantId: input.TenantId,
+                       conversationId: input.ConversationId,
+                       agentId: Level3AgentId,
+                       agentName: Level3AgentName,
+                       arguments: JsonSerializer.Serialize(
+                           new
+                           {
+                               input.TenantId,
+                               input.ClientId,
+                               input.CaseId,
+                               Category = "ApprovedMemoPattern",
+                               input.Title,
+                               Source = "Level3Workflow",
+                               runId
+                           },
+                           JsonOptions)))
+            {
+                await memoryService.WriteApprovedLearningAsync(
+                    new MemoryWriteRequest
+                    {
+                        TenantId = input.TenantId,
+                        ClientId = input.ClientId,
+                        CaseId = input.CaseId,
+                        Category = "ApprovedMemoPattern",
+                        Title = input.Title,
+                        Content = deliverableMemo.ExecutiveSummary,
+                        Source = "Level3Workflow",
+                        Metadata = new Dictionary<string, string>
+                        {
+                            ["runId"] = runId
+                        }
+                    },
+                    cancellationToken);
+            }
+        }
+        else if (reviewDecision.Decision.Equals("NeedMoreInfo", StringComparison.OrdinalIgnoreCase))
+        {
+            state.Status = "NeedMoreInfo";
+            state.NeedMoreInfoCount++;
+
+            reviewTaskPath = await humanReviewStore.CreateReviewTaskAsync(
+                input,
+                deliverableMemo,
+                reviewDecision,
+                cancellationToken);
+        }
+        else
+        {
+            state.Status = "Rejected";
+            state.RevisionCount++;
+
+            reviewTaskPath = await humanReviewStore.CreateEscalationTaskAsync(
+                input,
+                deliverableMemo,
+                reviewDecision,
+                cancellationToken);
+        }
+
+        state.CurrentMemoJsonPath = deliverableArtifactPath;
+        state.CurrentReviewJsonPath = reviewArtifactPath;
         state.UpdatedUtc = DateTimeOffset.UtcNow;
 
         await stateStore.SaveAsync(state, cancellationToken);
-
-        var reviewTaskId = await humanReviewStore.CreateNeedMoreInfoTaskAsync(
-            input,
-            advisorDecision,
-            cancellationToken);
 
         await SaveEvaluationStubAsync(
             input,
             runId,
             inputArtifactPath,
             advisorArtifactPath,
-            null,
-            null,
-            null,
+            deliverableArtifactPath,
+            reviewArtifactPath,
+            docxPath,
             state,
             cancellationToken);
 
@@ -342,76 +328,106 @@ public sealed class Level3WorkflowRunner(
         {
             CaseId = input.CaseId,
             RunId = runId,
-            Status = "NeedMoreInfo",
+            Status = state.Status,
             AdvisorArtifactPath = advisorArtifactPath,
-            ReviewTaskId = reviewTaskId
+            DeliverableArtifactPath = deliverableArtifactPath,
+            ReviewArtifactPath = reviewArtifactPath,
+            MemoDocxPath = docxPath,
+            ReviewTaskId = reviewTaskPath
         };
     }
 
-    private async Task<string> BuildDocxAsync(
-        string caseId,
-        DeliverableMemo deliverableMemo,
-        CancellationToken cancellationToken)
-    {
-        using var docxScope = ExecuteToolScope.Start(new ExecuteToolOptions
-        {
-            ToolName = "OpenXmlDocxMemoBuilder",
-            ToolType = "document-generation"
-        });
-
-        return await docxMemoBuilder.BuildAsync(
-            caseId,
-            deliverableMemo,
-            cancellationToken);
-    }
-
-    private async Task WriteApprovedLearningAsync(
-        KnowledgeInput input,
-        string runId,
-        DeliverableMemo deliverableMemo,
-        CancellationToken cancellationToken)
-    {
-        using var memoryWriteScope = ExecuteToolScope.Start(new ExecuteToolOptions
-        {
-            ToolName = "FoundryMemoryWrite",
-            ToolType = "memory-write"
-        });
-
-        await memoryService.WriteApprovedLearningAsync(new MemoryWriteRequest
-        {
-            TenantId = input.TenantId,
-            ClientId = input.ClientId,
-            CaseId = input.CaseId,
-            Category = "ApprovedMemoPattern",
-            Title = input.Title,
-            Content = deliverableMemo.ExecutiveSummary,
-            Source = "Level3Workflow",
-            Metadata = new Dictionary<string, string>
-            {
-                ["runId"] = runId
-            }
-        }, cancellationToken);
-    }
-
-    private static IDisposable StartAgentScope(
-        string agentId,
-        string agentName,
+    private static InvokeAgentScope StartInvokeScope(
+        string invokedAgentId,
+        string invokedAgentName,
         string tenantId,
         string? conversationId,
         string requestContent,
         string endpoint,
-        string sourceName)
+        string sourceName,
+        string? callerAgentId,
+        string? callerAgentName)
     {
-        return InvokeAgentScope.Start(new InvokeAgentOptions
+        var invokeAgentDetails = new InvokeAgentDetails
+        {
+            AgentId = invokedAgentId,
+            AgentName = invokedAgentName,
+            TenantId = tenantId,
+            ConversationId = conversationId,
+            Endpoint = endpoint
+        };
+
+        var tenantDetails = new TenantDetails
+        {
+            TenantId = tenantId
+        };
+
+        var request = new Request
+        {
+            Content = requestContent,
+            SourceMetadata = new SourceMetadata
+            {
+                Name = sourceName
+            }
+        };
+
+        AgentDetails? callerAgentDetails = null;
+
+        if (!string.IsNullOrWhiteSpace(callerAgentId))
+        {
+            callerAgentDetails = new AgentDetails
+            {
+                AgentId = callerAgentId,
+                AgentName = callerAgentName,
+                ConversationId = conversationId,
+                TenantId = tenantId
+            };
+        }
+
+        return InvokeAgentScope.Start(
+            invokeAgentDetails,
+            tenantDetails,
+            request,
+            callerAgentDetails,
+            callerDetails: null,
+            conversationId: conversationId);
+    }
+
+    private static ExecuteToolScope StartToolScope(
+        string toolName,
+        string toolType,
+        string tenantId,
+        string? conversationId,
+        string agentId,
+        string agentName,
+        string? arguments = null)
+    {
+        var toolCallDetails = new ToolCallDetails
+        {
+            ToolCallId = Guid.NewGuid().ToString("N"),
+            ToolName = toolName,
+            ToolType = toolType,
+            Arguments = arguments
+        };
+
+        var agentDetails = new AgentDetails
         {
             AgentId = agentId,
             AgentName = agentName,
-            TenantId = tenantId,
             ConversationId = conversationId,
-            RequestContent = requestContent,
-            Endpoint = endpoint,
-            SourceName = sourceName
-        });
+            TenantId = tenantId
+        };
+
+        var tenantDetails = new TenantDetails
+        {
+            TenantId = tenantId
+        };
+
+        return ExecuteToolScope.Start(
+            toolCallDetails,
+            agentDetails,
+            tenantDetails,
+            parentId: conversationId);
     }
 
     private async Task SaveEvaluationStubAsync(
@@ -454,6 +470,7 @@ public sealed class Level3WorkflowRunner(
         try
         {
             var parsed = JsonSerializer.Deserialize<T>(raw, JsonOptions);
+
             if (parsed is null)
             {
                 throw new InvalidOperationException($"{actor} returned empty JSON.");
