@@ -14,7 +14,8 @@ This is the most simplest form of agentic reasoning.
 
 **Microsoft Agent Framework**
 
-Solution 1 
+**Solution 1**
+
 •	WorkflowFactory builds true Semantic Kernel ChatCompletionAgent instances (SK agents) and passes them into Workflow.
 •	GroupChatOrchestrator.RegisterRoles currently constructs EngineAgent.EngineAgent instances (a custom HTTP wrapper) — so the orchestrator is using EngineAgent, not SK ChatCompletionAgent.
 •	The orchestrator implements a simple think-and-act flow (TaxAdvisor -> Deliverable -> Review) by calling EngineAgent.RunAsync; it does not currently accept or invoke SK ChatCompletionAgent objects.
@@ -37,7 +38,7 @@ Solution 1
 
 
 
-Solution 2
+**Solution 2**
 
 AIAgent is a primitive provided by Microsoft's Agent framework. The specific instance returned under the "tax-level3-groupchat" key acts as the overall entry point. This could be configured either as an orchestrator that explicitly routes execution across inner sub-agents, or as a single large workflow routine that sequentially triggers those steps.
 2.	Does the Tax Advisor, Deliverable Agent, and Review Agent get called? Yes. Although you are only calling RunAsync() on the outer workflowAgent, this agent coordinates the execution of those three roles internally (the "GroupChat" pattern).
