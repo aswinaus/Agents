@@ -84,6 +84,7 @@ The agent:
 
 **Solution:**
 
+<img width="967" height="664" alt="image" src="https://github.com/user-attachments/assets/18583480-cf5c-4466-8e2a-4bf0229ac212" />
 
 
 
