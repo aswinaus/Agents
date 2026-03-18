@@ -1,4 +1,93 @@
 # Agents
+Level 3 Agent implementation under the Microsoft Agents “Think & Act” maturity model using [Microsoft Agent Framework](https://learn.microsoft.com/en-us/agent-framework/overview/?pivots=programming-language-csharp) to showcase Autonmous reasoning, multi-step planning, tool/workflow execution, coordinated multi-agent collaboration, [state management of agents](https://learn.microsoft.com/en-us/agent-framework/workflows/state?pivots=programming-language-csharp) within [GroupChatOrchestrator](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/group-chat?pivots=programming-language-csharp) and [Observability](https://learn.microsoft.com/en-us/agent-framework/workflows/observability?pivots=programming-language-csharp).
+
+Demonstrates Level 3 (Think & Act) agent behavior exhibiting autonomous reasoning, multi step planning, tool/[workflow](https://learn.microsoft.com/en-us/agent-framework/get-started/workflows?pivots=programming-language-csharp) execution and coordinated multi agent collaboration to achieve a business outcome (tax memo creation).
+
+1. Autonomous Trigger → Goal Formation
+
+	•	Trigger: SharePoint List event (tax alert published)
+	
+	•	Agent: [Copilot Studio Agent](https://learn.microsoft.com/en-us/agent-framework/agents/providers/copilot-studio?pivots=programming-language-csharp)
+	
+	•	Behavior: Initiates the workflow without human prompting
+
+	This shows autonomous task initiation
+
+2. Multi Step Reasoning & Planning
+This flow is not a single prompt → response.
+
+The agent:
+
+	1.	Detects a tax alert
+	
+	2.	Calls a knowledge acquisition agent to identify impacted internal clients
+	
+	3.	Delegates execution to a custom code engine agent
+	
+	4.	Executes a structured, multi agent workflow
+    
+	This is explicit planning and delegation — core Level 3 behavior
+
+3. Tool & [Workflow](https://learn.microsoft.com/en-us/agent-framework/get-started/workflows?pivots=programming-language-csharp) Execution (“Act”)
+
+	•	The [GroupChatOrchestrator](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/group-chat?pivots=programming-language-csharp) is exposed as a workflow
+	
+	•	It is invoked programmatically by the agent
+	
+	•	The agent is not just reasoning — it is executing actions
+
+	Showcases “Act” capability (not Level 2)
+
+4. Multi Agent Collaboration (Key Level 3)
+
+	Inside your GroupChatOrchestrator, you have four specialized agents:
+	
+	**Agent	Responsibility**
+	
+	**Tax Advisor**	Domain reasoning & interpretation
+	
+	**Deliverable**	Drafting the tax memo
+	
+	**Reviewer**	Quality, accuracy, and compliance checks
+	
+	**Dispatcher**	Turn taking, coordination, and flow control
+	
+	This is role based, cooperative agent reasoning, not a single monolithic agent
+	
+	The Dispatcher acting as a coordinator is especially strong Level 3 evidence
+
+5. Outcome Driven Completion
+   
+	•	The system produces a final reviewed tax memo
+
+	•	Explicit decision points (e.g., reviewer requests revisions)
+
+	•	Retry or fallback logic
+
+	•	State tracking across agent turns
+
+	•	Audit/logging of agent reasoning steps
+
+	•	Memo is delivered through downstream systems (email, storage, etc.)
+
+**End to end autonomous execution tied to a business outcome**
+	Autonomous initiation.
+
+	Multi step planning.
+	
+	Tool/workflow execution.
+	
+	Multi agent orchestration.
+	
+	Business aligned outcome.
+
+
+
+
+
+
+
+
 AI Agent implementation with TP and Form990 Tax Form application
 
 # [Routing Agent with Semantic Caching](https://github.com/aswinaus/Agents/blob/main/Routing_Agent_with_Semantic_Caching.ipynb)  
