@@ -40,7 +40,7 @@ The agent:
 
 4. Multi Agent Collaboration (Key Level 3)
 
-	Inside your GroupChatOrchestrator, you have four specialized agents:
+	Inside GroupChatOrchestrator, there are four specialized agents:
 	
 	**Agent	Responsibility**
 	
