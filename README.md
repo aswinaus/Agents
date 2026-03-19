@@ -3,7 +3,7 @@ Level 3 Agent implementation under the Microsoft Agents “Think & Act” maturi
 
 Demonstrates Level 3 (Think & Act) agent behavior exhibiting autonomous reasoning, multi step planning, tool/[workflow](https://learn.microsoft.com/en-us/agent-framework/get-started/workflows?pivots=programming-language-csharp) execution and coordinated multi agent collaboration to achieve a business outcome (tax memo creation).
 
-1. Autonomous Trigger → Goal Formation
+**1. Autonomous Trigger → Goal Formation**
 
 	•	Trigger: SharePoint List event (tax alert published)
 	
@@ -13,7 +13,7 @@ Demonstrates Level 3 (Think & Act) agent behavior exhibiting autonomous reasonin
 
 	This shows autonomous task initiation
 
-2. Multi Step Reasoning & Planning
+**2. Multi Step Reasoning & Planning**
 This flow is not a single prompt → response.
 
 The agent:
@@ -28,7 +28,7 @@ The agent:
     
 	This is explicit planning and delegation — core Level 3 behavior
 
-3. Tool & [Workflow](https://learn.microsoft.com/en-us/agent-framework/get-started/workflows?pivots=programming-language-csharp) Execution (“Act”)
+**3. Tool & [Workflow](https://learn.microsoft.com/en-us/agent-framework/get-started/workflows?pivots=programming-language-csharp) Execution (“Act”)**
 
 	•	The [GroupChatOrchestrator](https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/group-chat?pivots=programming-language-csharp) is exposed as a workflow
 	
@@ -38,7 +38,7 @@ The agent:
 
 	Showcases “Act” capability (not Level 2)
 
-4. Multi Agent Collaboration (Key Level 3)
+**4. Multi Agent Collaboration (Key Level 3)**
 
 	Inside GroupChatOrchestrator, there are four specialized agents:
 	
@@ -56,7 +56,7 @@ The agent:
 	
 	The Dispatcher acting as a coordinator is especially strong Level 3 evidence
 
-5. Outcome Driven Completion
+**5. Outcome Driven Completion**
    
 	•	The system produces a final reviewed tax memo
 
@@ -71,6 +71,7 @@ The agent:
 	•	Memo is delivered through downstream systems (email, storage, etc.)
 
 **End to end autonomous execution tied to a business outcome**
+	
 	Autonomous initiation.
 
 	Multi step planning.
