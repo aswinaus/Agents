@@ -3,6 +3,7 @@ Level 3 Agent implementation under the Microsoft Agents “Think & Act” maturi
 
 Demonstrates Level 3 (Think & Act) agent behavior exhibiting autonomous reasoning, multi step planning, tool/[workflow](https://learn.microsoft.com/en-us/agent-framework/get-started/workflows?pivots=programming-language-csharp) execution and coordinated multi agent collaboration to achieve a business outcome (tax memo creation).
 
+
 **1. Autonomous Trigger → Goal Formation**
 
 	•	Trigger: SharePoint List event (tax alert published)
